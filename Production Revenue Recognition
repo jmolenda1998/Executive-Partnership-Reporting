@@ -1,0 +1,342 @@
+CREATE OR REPLACE VIEW BSEDW.SFSC.VW_REVENUE_RECOGNITION AS
+WITH source_data AS (
+    SELECT
+        d.ID,
+        d.NAME,
+        d."AGILITEK__DIVISION__R.NAME" AS DIVISION_NAME,
+        d."AGILITEK__OPPORTUNITY__R.NAME" AS OPPORTUNITY_NAME,
+        COALESCE(d.AGILITEK__MANUAL_AMOUNT__C, d.AGILITEK__AUTOMATIC_AMOUNT__C) AS TOTAL_REVENUE,
+        d.AGILITEK__PRICING_MODE__C AS PRICING_MODE,
+        d.AGILITEK__OPPORTUNITY__C,
+        a.ID AS AGREEMENT_ID,
+        a.AGREEMENT_NUMBER__C AS AGREEMENT_NUMBER,
+        a."CREATEDBY.NAME" AS AGREEMENT_CREATEDBY_NAME,
+        a.CREATEDBYID AS AGREEMENT_CREATEDBYID,
+        a.CREATEDDATE AS AGREEMENT_CREATEDDATE,
+        a.ISDELETED AS AGREEMENT_ISDELETED,
+        a.LASTACTIVITYDATE AS AGREEMENT_LASTACTIVITYDATE,
+        a."LASTMODIFIEDBY.NAME" AS AGREEMENT_LASTMODIFIEDBY_NAME,
+        a.LASTMODIFIEDBYID AS AGREEMENT_LASTMODIFIEDBYID,
+        a.LASTMODIFIEDDATE AS AGREEMENT_LASTMODIFIEDDATE,
+        a.LASTREFERENCEDDATE AS AGREEMENT_LASTREFERENCEDDATE,
+        a.LASTVIEWEDDATE AS AGREEMENT_LASTVIEWEDDATE,
+        a.NAME AS AGREEMENT_NAME,
+        a."OWNER.NAME" AS AGREEMENT_OWNER_NAME,
+        a.OWNERID AS AGREEMENT_OWNERID,
+        a.SYSTEMMODSTAMP AS AGREEMENT_SYSTEMMODSTAMP,
+        a.AGILITEK__ACCOUNT__C AS AGREEMENT_ACCOUNT_ID,
+        CASE
+            WHEN a.AGREEMENT_NUMBER__C = '01115' THEN 'Jetblue at the Key'
+            ELSE a."AGILITEK__ACCOUNT__R.NAME"
+        END AS AGREEMENT_ACCOUNT_NAME,
+        a.AGILITEK__CLOSE_DATE__C AS AGREEMENT_CLOSE_DATE,
+        a.AGILITEK__CONTRACT_END_DATE__C AS AGREEMENT_CONTRACT_END_DATE,
+        a.AGILITEK__CONTRACT_LENGTH_YEARS__C AS AGREEMENT_CONTRACT_LENGTH_YEARS,
+        a.AGILITEK__CONTRACT_START_DATE__C AS AGREEMENT_CONTRACT_START_DATE,
+        a.AGILITEK__DIVISION__C AS AGREEMENT_DIVISION_ID,
+        a."AGILITEK__DIVISION__R.NAME" AS AGREEMENT_DIVISION_NAME,
+        a.AGILITEK__ENABLE_REVENUE_ALLOCATION__C AS AGREEMENT_ENABLE_REV_ALLOCATION,
+        a.AGILITEK__STAGE__C AS AGREEMENT_STAGE,
+        a.AGILITEK__START_SEASON__C AS AGREEMENT_START_SEASON_ID,
+        a."AGILITEK__START_SEASON__R.NAME" AS AGREEMENT_START_SEASON_NAME,
+        a.AGILITEK__TOTAL_BARTER_VALUE__C AS AGREEMENT_TOTAL_BARTER_VALUE,
+        a.AGILITEK__TOTAL_CASH_VALUE__C AS AGREEMENT_TOTAL_CASH_VALUE,
+        a.AGILITEK__TOTAL_DEAL_VALUE__C AS AGREEMENT_TOTAL_DEAL_VALUE,
+        a.AGILITEK__TOTAL_EXPIRED_OPTION_VALUE__C AS AGREEMENT_TOTAL_EXPIRED_OPTION_VALUE,
+        a.AGILITEK__TOTAL_HARD_COST__C AS AGREEMENT_TOTAL_HARD_COST,
+        a.AGILITEK__TOTAL_OPTION_VALUE__C AS AGREEMENT_TOTAL_OPTION_VALUE,
+        a.AGILITEK__TOTAL_PRODUCTION_COST__C AS AGREEMENT_TOTAL_PRODUCTION_COST,
+        a.AGILITEK__TOTAL_REALIZED_VALUE__C AS AGREEMENT_TOTAL_REALIZED_VALUE,
+        o.TYPE AS AGREEMENT_TYPE,
+        a."AGREEMENT_SELLER__R.NAME" AS AGREEMENT_SELLER,
+        a."ACCOUNT_MANAGER__R.NAME" AS AGREEMENT_PARTNERSHIP_MARKETING_REP,
+        a.Revenue_Recognition_End_Date__c AS AGREEMENT_REV_REC_END_DATE,
+        a.REVENUE_RECOGNITION_TYPE__C AS REVENUE_RECOGNITION_TYPE,
+        a.Contract_Year_1_End_Date__c AS AGREEMENT_YEAR_1_END_DATE,
+        o.AGILITEK__OPTION_EXPIRATION__C,
+        o.AGILITEK__OPTION_STATUS__C,
+        o.AGILITEK__OPTION_TYPE__C,
+        o."AGILITEK__START_SEASON__R.NAME" AS SEASON,
+        TRY_TO_NUMBER(LEFT(o."AGILITEK__START_SEASON__R.NAME", 4)) AS SEASON_START_YEAR,
+        TRY_TO_NUMBER(SUBSTR(o."AGILITEK__START_SEASON__R.NAME", 6, 4)) AS SEASON_END_YEAR,
+        TRY_TO_NUMBER(LEFT(a."AGILITEK__START_SEASON__R.NAME", 4)) AS AGREEMENT_START_SEASON_YEAR,
+        TRY_TO_NUMBER(LEFT(o."AGILITEK__START_SEASON__R.NAME", 4))
+            - TRY_TO_NUMBER(LEFT(a."AGILITEK__START_SEASON__R.NAME", 4)) AS SEASON_OFFSET,
+        CASE
+            WHEN TRY_TO_NUMBER(SUBSTR(o."AGILITEK__START_SEASON__R.NAME", 6, 4)) =
+                 MAX(TRY_TO_NUMBER(SUBSTR(o."AGILITEK__START_SEASON__R.NAME", 6, 4))) OVER (PARTITION BY a.ID)
+            THEN TRUE ELSE FALSE
+        END AS IS_FINAL_SEASON,
+        CASE
+            WHEN o."AGILITEK__START_SEASON__R.NAME" = a."AGILITEK__START_SEASON__R.NAME"
+            THEN o.TYPE
+            ELSE 'Existing'
+        END AS OPP_AGREEMENT_TYPE
+    FROM BSEDW.SFSC.AGILITEK__DIVISION_REVENUE__C d
+    JOIN BSEDW.SFSC.OPPORTUNITY o ON o.ID = d.AGILITEK__OPPORTUNITY__C
+    LEFT JOIN BSEDW.SFSC.AGILITEK__AGREEMENT__C a ON a.ID = o.AGILITEK__AGREEMENT__C
+    WHERE d.ISDELETED = FALSE
+      AND COALESCE(d.AGILITEK__MANUAL_AMOUNT__C, d.AGILITEK__AUTOMATIC_AMOUNT__C) IS NOT NULL
+      AND COALESCE(d.AGILITEK__MANUAL_AMOUNT__C, d.AGILITEK__AUTOMATIC_AMOUNT__C) != 0
+),
+months_sequence AS (
+    SELECT ROW_NUMBER() OVER (ORDER BY SEQ4()) AS month_offset
+    FROM TABLE(GENERATOR(ROWCOUNT => 36))
+),
+hospitality_by_opp AS (
+    SELECT 
+        OLI.OPPORTUNITYID,
+        OLI.AGILITEK__PRODUCT_FAMILY__C AS HOSPITALITY_TYPE,
+        SUM(OLI.TOTALPRICE) AS TYPE_TOTAL,
+        SUM(OLI.TOTALPRICE) / NULLIF(
+            SUM(SUM(OLI.TOTALPRICE)) OVER (PARTITION BY OLI.OPPORTUNITYID), 0
+        ) AS TYPE_RATIO
+    FROM BSEDW.SFSC.OPPORTUNITYLINEITEM OLI
+    WHERE OLI.AGILITEK__PRODUCT_FAMILY__C RLIKE '.+ Hospitality$'
+      AND OLI.ISDELETED = FALSE
+      AND OLI.TOTALPRICE IS NOT NULL
+      AND OLI.TOTALPRICE != 0
+    GROUP BY OLI.OPPORTUNITYID, OLI.AGILITEK__PRODUCT_FAMILY__C
+),
+phased AS (
+    SELECT
+        sd.*,
+        CASE
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                 AND sd.DIVISION_NAME IN ('Brooklyn Nets', 'Long Island Nets')
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, 10, 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+                 AND MONTH(sd.AGREEMENT_CONTRACT_START_DATE) IN (5, 6, 7, 8)
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                 AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'One Month a Year')
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Phase Contract Year 1 Into 1 Month')
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+                 AND sd.SEASON_OFFSET = 0
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'New York Liberty First')
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, 5, 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length > 12')
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length > 12')
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length < 12')
+                 AND sd.SEASON_OFFSET = 0
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length < 12')
+                 AND sd.SEASON_OFFSET = 0
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN sd.DIVISION_NAME = 'New York Liberty'
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, 5, 1)
+            WHEN sd.DIVISION_NAME IN ('Brooklyn Nets', 'Long Island Nets')
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, 10, 1)
+            ELSE DATE_FROM_PARTS(sd.SEASON_START_YEAR, 7, 1)
+        END AS PHASE_START_DATE,
+        LEAST(
+            CASE
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                     AND sd.DIVISION_NAME IN ('Brooklyn Nets', 'Long Island Nets')
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, 4, 1), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                     AND sd.DIVISION_NAME = 'New York Liberty'
+                     AND MONTH(sd.AGREEMENT_CONTRACT_START_DATE) IN (5, 6, 7, 8)
+                THEN LAST_DAY(DATEADD('month', 11, DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                     AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
+                THEN LAST_DAY(DATEADD('month', 11, DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'One Month a Year')
+                     AND sd.DIVISION_NAME = 'New York Liberty'
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Phase Contract Year 1 Into 1 Month')
+                     AND sd.DIVISION_NAME = 'New York Liberty'
+                     AND sd.SEASON_OFFSET = 0
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Final Contract Year Liberty Into 7 Months')
+                     AND CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'New York Liberty First')
+                     AND sd.DIVISION_NAME = 'New York Liberty'
+                     AND sd.IS_FINAL_SEASON = TRUE
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_START_YEAR + 1, 6, 1), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Final Contract Year Liberty Into 7 Months')
+                     AND sd.DIVISION_NAME = 'New York Liberty'
+                     AND sd.IS_FINAL_SEASON = TRUE
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR + 1, 6, 1), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'New York Liberty First')
+                     AND sd.DIVISION_NAME = 'New York Liberty'
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_START_YEAR, 9, 1), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length < 12')
+                     AND sd.SEASON_OFFSET = 0
+                     AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets')
+                THEN LAST_DAY(sd.AGREEMENT_YEAR_1_END_DATE, 'month')
+                WHEN sd.DIVISION_NAME = 'New York Liberty'
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, 9, 1), 'month')
+                WHEN sd.DIVISION_NAME IN ('Brooklyn Nets', 'Long Island Nets')
+                THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, 4, 1), 'month')
+                ELSE LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, 6, 1), 'month')
+            END,
+            COALESCE(sd.AGREEMENT_REV_REC_END_DATE, '9999-12-31')
+        ) AS PHASE_END_DATE
+    FROM source_data sd
+    WHERE sd.SEASON_START_YEAR IS NOT NULL
+),
+phased_with_months AS (
+    SELECT
+        p.*,
+        DATEDIFF('month', p.PHASE_START_DATE, p.PHASE_END_DATE) + 1 AS PHASE_MONTHS,
+        CASE
+            WHEN CONTAINS(COALESCE(p.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Final Contract Year Liberty Into 7 Months')
+                 AND p.DIVISION_NAME = 'New York Liberty'
+                 AND p.IS_FINAL_SEASON = TRUE
+            THEN 7
+            ELSE DATEDIFF('month', p.PHASE_START_DATE, p.PHASE_END_DATE) + 1
+        END AS REV_REC_DIVISOR
+    FROM phased p
+    WHERE p.PHASE_END_DATE >= p.PHASE_START_DATE
+),
+monthly_revenue AS (
+    SELECT
+        p.ID,
+        p.NAME,
+        p.DIVISION_NAME,
+        p.OPPORTUNITY_NAME,
+        p.TOTAL_REVENUE * COALESCE(h.TYPE_RATIO, 1) AS TOTAL_REVENUE,
+        p.PRICING_MODE,
+        p.AGILITEK__OPPORTUNITY__C,
+        p.AGREEMENT_ID,
+        p.AGREEMENT_NUMBER,
+        p.AGREEMENT_CREATEDBY_NAME,
+        p.AGREEMENT_CREATEDBYID,
+        p.AGREEMENT_CREATEDDATE,
+        p.AGREEMENT_ISDELETED,
+        p.AGREEMENT_LASTACTIVITYDATE,
+        p.AGREEMENT_LASTMODIFIEDBY_NAME,
+        p.AGREEMENT_LASTMODIFIEDBYID,
+        p.AGREEMENT_LASTMODIFIEDDATE,
+        p.AGREEMENT_LASTREFERENCEDDATE,
+        p.AGREEMENT_LASTVIEWEDDATE,
+        p.AGREEMENT_NAME,
+        p.AGREEMENT_OWNER_NAME,
+        p.AGREEMENT_OWNERID,
+        p.AGREEMENT_SYSTEMMODSTAMP,
+        p.AGREEMENT_ACCOUNT_ID,
+        p.AGREEMENT_ACCOUNT_NAME,
+        p.AGREEMENT_CLOSE_DATE,
+        p.AGREEMENT_CONTRACT_END_DATE,
+        p.AGREEMENT_CONTRACT_LENGTH_YEARS,
+        p.AGREEMENT_CONTRACT_START_DATE,
+        p.AGREEMENT_DIVISION_ID,
+        p.AGREEMENT_DIVISION_NAME,
+        p.AGREEMENT_ENABLE_REV_ALLOCATION,
+        p.AGREEMENT_STAGE,
+        p.AGREEMENT_START_SEASON_ID,
+        p.AGREEMENT_START_SEASON_NAME,
+        p.AGREEMENT_TOTAL_BARTER_VALUE,
+        p.AGREEMENT_TOTAL_CASH_VALUE,
+        p.AGREEMENT_TOTAL_DEAL_VALUE,
+        p.AGREEMENT_TOTAL_EXPIRED_OPTION_VALUE,
+        p.AGREEMENT_TOTAL_HARD_COST,
+        p.AGREEMENT_TOTAL_OPTION_VALUE,
+        p.AGREEMENT_TOTAL_PRODUCTION_COST,
+        p.AGREEMENT_TOTAL_REALIZED_VALUE,
+        p.AGREEMENT_TYPE,
+        p.AGREEMENT_SELLER,
+        p.AGREEMENT_PARTNERSHIP_MARKETING_REP,
+        p.OPP_AGREEMENT_TYPE,
+        p.REVENUE_RECOGNITION_TYPE,
+        p.SEASON_START_YEAR,
+        p.SEASON_END_YEAR,
+        p.AGILITEK__OPTION_EXPIRATION__C,
+        p.AGILITEK__OPTION_STATUS__C,
+        p.AGILITEK__OPTION_TYPE__C,
+        p.PHASE_START_DATE,
+        p.PHASE_END_DATE,
+        CASE
+            WHEN CONTAINS(COALESCE(p.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                 AND p.DIVISION_NAME = 'New York Liberty'
+                 AND MONTH(p.AGREEMENT_CONTRACT_START_DATE) IN (5, 6, 7, 8)
+            THEN COUNT(*) OVER (PARTITION BY p.ID)
+            ELSE p.PHASE_MONTHS
+        END AS PHASE_MONTHS,
+        DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE) AS REVENUE_MONTH,
+        (CASE
+            WHEN CONTAINS(COALESCE(p.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                 AND p.DIVISION_NAME = 'New York Liberty'
+                 AND MONTH(p.AGREEMENT_CONTRACT_START_DATE) IN (5, 6, 7, 8)
+            THEN p.TOTAL_REVENUE / NULLIF(COUNT(*) OVER (PARTITION BY p.ID), 0)
+            ELSE p.TOTAL_REVENUE / NULLIF(p.REV_REC_DIVISOR, 0)
+        END) * COALESCE(h.TYPE_RATIO, 1) AS MONTHLY_REVENUE,
+        TO_CHAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE), 'YYYY-MM') AS REVENUE_YEAR_MONTH,
+        CASE
+            WHEN MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) >= 7
+            THEN YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1
+            ELSE YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE))
+        END AS FISCAL_YEAR,
+        p.SEASON,
+        DATE_FROM_PARTS(
+            CASE
+                WHEN MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) >= 7
+                THEN YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE))
+                ELSE YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) - 1
+            END, 7, 1
+        ) AS FISCAL_YEAR_START,
+        CASE
+            WHEN p.DIVISION_NAME IN ('New York Liberty', 'Brooklyn Nets') THEN
+                CASE WHEN MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) >= 10
+                    THEN CONCAT(YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), '-',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1, ' (',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1, ' NYL)')
+                    ELSE CONCAT(YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) - 1, '-',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), ' (',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), ' NYL)')
+                END
+            WHEN p.DIVISION_NAME = 'Long Island Nets' THEN
+                CASE WHEN MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) >= 11
+                    THEN CONCAT(YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), '-',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1, ' (',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1, ' NYL)')
+                    ELSE CONCAT(YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) - 1, '-',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), ' (',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), ' NYL)')
+                END
+            ELSE
+                CASE WHEN MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) >= 7
+                    THEN CONCAT(YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), '-',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1, ' (',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) + 1, ' NYL)')
+                    ELSE CONCAT(YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) - 1, '-',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), ' (',
+                                YEAR(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)), ' NYL)')
+                END
+        END AS SPONSORSHIP_SEASON,
+        COALESCE(h.HOSPITALITY_TYPE, '') AS HOSPITALITY_TYPE,
+        CASE 
+            WHEN p.DIVISION_NAME = 'Hospitality' THEN COALESCE(REGEXP_REPLACE(h.HOSPITALITY_TYPE, ' Hospitality$', ''), '')
+            ELSE p.DIVISION_NAME
+        END AS HOSPITALITY_PARENT_DIVISION
+    FROM phased_with_months p
+    CROSS JOIN months_sequence ms
+    LEFT JOIN hospitality_by_opp h 
+        ON h.OPPORTUNITYID = p.AGILITEK__OPPORTUNITY__C
+        AND p.DIVISION_NAME = 'Hospitality'
+    WHERE ms.month_offset <= p.PHASE_MONTHS
+      AND NOT (
+          CONTAINS(COALESCE(p.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Final Contract Year Liberty Into 7 Months')
+          AND p.DIVISION_NAME = 'New York Liberty'
+          AND p.IS_FINAL_SEASON = TRUE
+          AND MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) NOT IN (5, 6, 7, 8, 9)
+      )
+      AND NOT (
+          CONTAINS(COALESCE(p.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+          AND p.DIVISION_NAME = 'New York Liberty'
+          AND MONTH(p.AGREEMENT_CONTRACT_START_DATE) IN (5, 6, 7, 8)
+          AND MONTH(DATEADD('month', ms.month_offset - 1, p.PHASE_START_DATE)) NOT IN (5, 6, 7, 8, 9)
+      )
+)
+SELECT * FROM monthly_revenue
