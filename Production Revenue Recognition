@@ -5,8 +5,10 @@ WITH source_data AS (
         d.NAME,
         d."AGILITEK__DIVISION__R.NAME" AS DIVISION_NAME,
         d."AGILITEK__OPPORTUNITY__R.NAME" AS OPPORTUNITY_NAME,
-        COALESCE(d.AGILITEK__MANUAL_AMOUNT__C, d.AGILITEK__AUTOMATIC_AMOUNT__C)
-            - COALESCE(o.AGILITEK__BARTER_AMOUNT__C, 0) AS TOTAL_REVENUE,
+        CASE WHEN a.AGREEMENT_NUMBER__C = '00986' THEN d.AGILITEK__AUTOMATIC_AMOUNT__C
+             ELSE COALESCE(d.AGILITEK__MANUAL_AMOUNT__C, d.AGILITEK__AUTOMATIC_AMOUNT__C)
+        END
+            - CASE WHEN a.AGREEMENT_NUMBER__C = '00923' THEN COALESCE(o.AGILITEK__BARTER_AMOUNT__C, 0) ELSE 0 END AS TOTAL_REVENUE,
         d.AGILITEK__PRICING_MODE__C AS PRICING_MODE,
         d.AGILITEK__OPPORTUNITY__C,
         a.ID AS AGREEMENT_ID,
@@ -99,6 +101,11 @@ hospitality_by_opp AS (
       AND OLI.TOTALPRICE != 0
     GROUP BY OLI.OPPORTUNITYID, OLI.AGILITEK__PRODUCT_FAMILY__C
 ),
+agreement_division_count AS (
+    SELECT AGREEMENT_ID, COUNT(DISTINCT DIVISION_NAME) AS DIV_COUNT
+    FROM source_data
+    GROUP BY AGREEMENT_ID
+),
 phased AS (
     SELECT
         sd.*,
@@ -112,14 +119,22 @@ phased AS (
             THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
             WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
                  AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
+                 AND sd.AGREEMENT_NUMBER = '01110'
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                 AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
             THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
-            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'One Month a Year')
+            WHEN CONTAINS(UPPER(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard')), 'ONE MONTH A YEAR')
                  AND sd.DIVISION_NAME = 'New York Liberty'
             THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
             WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Phase Contract Year 1 Into 1 Month')
-                 AND sd.DIVISION_NAME = 'New York Liberty'
+                 AND (sd.DIVISION_NAME = 'New York Liberty' OR dc.DIV_COUNT = 1)
                  AND sd.SEASON_OFFSET = 0
             THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'New York Liberty First')
+                 AND sd.DIVISION_NAME = 'New York Liberty'
+                 AND sd.AGREEMENT_NUMBER = '00719'
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
             WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'New York Liberty First')
                  AND sd.DIVISION_NAME = 'New York Liberty'
             THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, 5, 1)
@@ -135,6 +150,13 @@ phased AS (
             WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length < 12')
                  AND sd.SEASON_OFFSET = 0
             THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
+            WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length < 12')
+                 AND sd.SEASON_OFFSET > 0
+                 AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
+            THEN DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_YEAR_1_END_DATE) % 12 + 1, 1)
+            WHEN sd.DIVISION_NAME = 'New York Liberty'
+                 AND sd.AGREEMENT_NUMBER = '00923'
+            THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)
             WHEN sd.DIVISION_NAME = 'New York Liberty'
             THEN DATE_FROM_PARTS(sd.SEASON_END_YEAR, 5, 1)
             WHEN sd.DIVISION_NAME IN ('Brooklyn Nets', 'Long Island Nets')
@@ -152,12 +174,16 @@ phased AS (
                 THEN LAST_DAY(DATEADD('month', 11, DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)), 'month')
                 WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
                      AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
+                     AND sd.AGREEMENT_NUMBER = '01110'
+                THEN LAST_DAY(DATEADD('month', 11, DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)), 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Midyear Escalator')
+                     AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
                 THEN LAST_DAY(DATEADD('month', 11, DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1)), 'month')
-                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'One Month a Year')
+                WHEN CONTAINS(UPPER(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard')), 'ONE MONTH A YEAR')
                      AND sd.DIVISION_NAME = 'New York Liberty'
                 THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1), 'month')
                 WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Phase Contract Year 1 Into 1 Month')
-                     AND sd.DIVISION_NAME = 'New York Liberty'
+                     AND (sd.DIVISION_NAME = 'New York Liberty' OR dc.DIV_COUNT = 1)
                      AND sd.SEASON_OFFSET = 0
                 THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, MONTH(sd.AGREEMENT_CONTRACT_START_DATE), 1), 'month')
                 WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Final Contract Year Liberty Into 7 Months')
@@ -176,6 +202,10 @@ phased AS (
                      AND sd.SEASON_OFFSET = 0
                      AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets')
                 THEN LAST_DAY(sd.AGREEMENT_YEAR_1_END_DATE, 'month')
+                WHEN CONTAINS(COALESCE(sd.REVENUE_RECOGNITION_TYPE, 'Standard'), 'Contract Year 1 Length < 12')
+                     AND sd.SEASON_OFFSET > 0
+                     AND sd.DIVISION_NAME NOT IN ('Brooklyn Nets', 'Long Island Nets', 'New York Liberty')
+                THEN LAST_DAY(DATEADD('month', 11, DATE_FROM_PARTS(sd.SEASON_START_YEAR, MONTH(sd.AGREEMENT_YEAR_1_END_DATE) % 12 + 1, 1)), 'month')
                 WHEN sd.DIVISION_NAME = 'New York Liberty'
                 THEN LAST_DAY(DATE_FROM_PARTS(sd.SEASON_END_YEAR, 9, 1), 'month')
                 WHEN sd.DIVISION_NAME IN ('Brooklyn Nets', 'Long Island Nets')
@@ -185,6 +215,7 @@ phased AS (
             COALESCE(sd.AGREEMENT_REV_REC_END_DATE, '9999-12-31')
         ) AS PHASE_END_DATE
     FROM source_data sd
+    LEFT JOIN agreement_division_count dc ON dc.AGREEMENT_ID = sd.AGREEMENT_ID
     WHERE sd.SEASON_START_YEAR IS NOT NULL
 ),
 phased_with_months AS (
